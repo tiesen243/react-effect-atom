@@ -41,8 +41,8 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
     >
   }
 
-  public make<TValues extends Schema.Struct<TFields>['Type'], A, E, R = never>(
-    onSubmit: (values: TValues) => Effect.Effect<A, E, R>,
+  public make<TValues extends Schema.Struct<TFields>['Type'], A, E>(
+    onSubmit: (values: TValues) => Effect.Effect<A, E>,
     options: {
       defaultValues: TValues
       onSuccess?: (data: NoInfer<A>) => void
@@ -89,6 +89,70 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
       formId: string
     } | null>(null)
 
+    const useSubmit = () => {
+      const form = formAtom.use()
+
+      const valuesRef = React.useRef<TValues>(options.defaultValues)
+      useAtomSubscribe(
+        form,
+        (latestValues) => (valuesRef.current = latestValues.values),
+        { immediate: true }
+      )
+
+      const isPending = useAtomValue(formAtom.use(), (s) => s.isPending)
+
+      const setState = useAtomSet(form)
+
+      const handleSubmit = React.useCallback(
+        async (event?: React.SubmitEvent<HTMLFormElement>) => {
+          event?.preventDefault()
+          event?.stopPropagation()
+
+          if (isPending) return
+          setState((prev) => ({ ...prev, isPending: true }))
+
+          const result = Schema.decodeUnknownResult(
+            Schema.Struct(this.fields) as never
+          )(valuesRef.current, { errors: 'all' })
+
+          if (result._tag === 'Failure') {
+            const { issues } = formatter(result.failure.issue)
+            const errors = issues.reduce(
+              (acc, issue) => {
+                const path = issue.path?.[0] as keyof TValues
+                if (!acc[path]) acc[path] = []
+                acc[path].push(issue)
+                return acc
+              },
+              {} as Record<keyof TValues, Issues>
+            )
+            return setState((prev) => ({ ...prev, errors, isPending: false }))
+          } else
+            setState((prev) => ({
+              ...prev,
+              errors: {} as Record<keyof TValues, Issues>,
+            }))
+
+          await onSubmit(result.success).pipe(
+            Effect.tap((data) => Effect.sync(() => options.onSuccess?.(data))),
+            Effect.catch((error) =>
+              Effect.sync(() => options.onError?.(error))
+            ),
+            Effect.runPromise
+          )
+          setState((prev) => ({ ...prev, isPending: false }))
+        },
+        [setState, isPending]
+      )
+
+      return handleSubmit
+    }
+
+    const FormInner = (props: React.ComponentProps<'form'>) => {
+      const handleSubmit = useSubmit()
+      return <form {...props} onSubmit={handleSubmit} />
+    }
+
     const Form = (props: React.ComponentProps<'form'>) => {
       const id = React.useId()
       const formId = `form-${id}`
@@ -96,12 +160,7 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
       return (
         <FormContext value={{ formId }}>
           <formAtom.Provider>
-            <form
-              data-slot='form'
-              id={formId}
-              onSubmit={(e) => e.preventDefault()}
-              {...props}
-            />
+            <FormInner data-slot='form' id={formId} {...props} />
           </formAtom.Provider>
         </FormContext>
       )
@@ -124,7 +183,9 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
         }
       }) => React.ReactNode
     }) => {
-      const { formId } = React.use(FormContext)
+      const ctx = React.use(FormContext)
+      if (!ctx) throw new Error('Field must be used within a Form')
+
       const prevValueRef = React.useRef<TValues[TFieldName]>(
         options.defaultValues[props.name]
       )
@@ -163,12 +224,12 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
       }, [props.name, setState, value])
 
       const id = React.useId()
-      const fieldId = `${formId}-field-${id}`
+      const fieldId = `${ctx.formId}-field-${id}`
       const descriptionId = `${fieldId}-description`
       const errorId = `${fieldId}-error`
 
       const a11yProps = {
-        form: formId,
+        form: ctx.formId,
         id: fieldId,
         'aria-describedby':
           errors.length > 0 ? `${errorId} ${descriptionId}` : descriptionId,
@@ -198,57 +259,15 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
         meta: { formId: string; isPending: boolean }
       }) => React.ReactNode
     }) => {
-      const { formId } = React.use(FormContext)
-      const form = formAtom.use()
-
-      const valuesRef = React.useRef<TValues>(options.defaultValues)
-      useAtomSubscribe(
-        form,
-        (latestValues) => (valuesRef.current = latestValues.values),
-        { immediate: true }
-      )
+      const ctx = React.use(FormContext)
+      if (!ctx) throw new Error('Submit must be used within a Form')
 
       const isPending = useAtomValue(formAtom.use(), (s) => s.isPending)
-
-      const setState = useAtomSet(form)
-
-      const handleSubmit = React.useCallback(async () => {
-        if (isPending) return
-        setState((prev) => ({ ...prev, isPending: true }))
-
-        const result = Schema.decodeUnknownResult(
-          Schema.Struct(this.fields) as never
-        )(valuesRef.current, { errors: 'all' })
-
-        if (result._tag === 'Failure') {
-          const { issues } = formatter(result.failure.issue)
-          const errors = issues.reduce(
-            (acc, issue) => {
-              const path = issue.path[0] as keyof TValues
-              if (!acc[path]) acc[path] = []
-              acc[path].push(issue)
-              return acc
-            },
-            {} as Record<keyof TValues, Issues>
-          )
-          return setState((prev) => ({ ...prev, errors, isPending: false }))
-        } else
-          setState((prev) => ({
-            ...prev,
-            errors: {} as Record<keyof TValues, Issues>,
-          }))
-
-        await onSubmit(result.success).pipe(
-          Effect.tap((data) => Effect.sync(() => options.onSuccess?.(data))),
-          Effect.catch((error) => Effect.sync(() => options.onError?.(error))),
-          Effect.runPromise
-        )
-        setState((prev) => ({ ...prev, isPending: false }))
-      }, [setState, isPending])
+      const submit = useSubmit()
 
       return props.render({
-        submit: handleSubmit,
-        meta: { formId, isPending },
+        submit: () => submit(),
+        meta: { formId: ctx.formId, isPending },
       })
     }
 
@@ -256,6 +275,10 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
       Form,
       Field,
       Submit,
+
+      useSubmit,
+
+      state: formAtom.use,
     }
   }
 }

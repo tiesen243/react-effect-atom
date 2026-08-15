@@ -1,3 +1,4 @@
+import { useAtomValue } from '@effect/atom-react'
 import { Effect, Schema } from 'effect'
 
 import { Button } from '@/components/ui/button'
@@ -69,18 +70,21 @@ export default function App() {
               )}
             />
 
-            <form.Submit
-              render={({ submit, meta }) => (
-                <Field>
-                  <Button onClick={submit} disabled={meta.isPending}>
-                    {meta.isPending ? 'Submitting...' : 'Submit'}
-                  </Button>
-                </Field>
-              )}
-            />
+            <SubmitButton />
           </FieldGroup>
         </FieldSet>
       </form.Form>
     </main>
+  )
+}
+
+const SubmitButton = () => {
+  const isPending = useAtomValue(form.state(), (s) => s.isPending)
+  const submit = form.useSubmit()
+
+  return (
+    <Button type='submit' onClick={() => submit()} disabled={isPending}>
+      Submit
+    </Button>
   )
 }
