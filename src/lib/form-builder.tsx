@@ -176,7 +176,7 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
     }
 
     const Form: React.FC<
-      useRender.ComponentProps<'form'> & {
+      Omit<useRender.ComponentProps<'form'>, 'render'> & {
         render: (args: {
           handleSubmit: () => void
         }) => useRender.ComponentProps<'form'>['render']
