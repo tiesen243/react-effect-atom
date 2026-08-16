@@ -42,7 +42,7 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
   }
 
   public make<TValues extends Schema.Struct<TFields>['Type'], A, E>(
-    onSubmit: (values: TValues) => Effect.Effect<A, E>,
+    onSubmit: (values: NoInfer<TValues>) => Effect.Effect<A, E>,
     options: {
       defaultValues: TValues
       onSuccess?: (data: NoInfer<A>) => void
@@ -134,10 +134,8 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
             }))
 
           await onSubmit(result.success).pipe(
-            Effect.tap((data) => Effect.sync(() => options.onSuccess?.(data))),
-            Effect.catch((error) =>
-              Effect.sync(() => options.onError?.(error))
-            ),
+            Effect.tap((a) => Effect.sync(() => options.onSuccess?.(a))),
+            Effect.catch((e) => Effect.sync(() => options.onError?.(e))),
             Effect.runPromise
           )
           setState((prev) => ({ ...prev, isPending: false }))
@@ -180,6 +178,16 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
           descriptionId: string
           errorId: string
           errors: Issues
+
+          add: TValues[TFieldName] extends Array<infer U>
+            ? (value: U) => void
+            : never
+          update: TValues[TFieldName] extends Array<infer U>
+            ? (index: number, value: U) => void
+            : never
+          remove: TValues[TFieldName] extends Array<infer _U>
+            ? (index: number) => void
+            : never
         }
       }) => React.ReactNode
     }) => {
@@ -223,6 +231,43 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
         }
       }, [props.name, setState, value])
 
+      const add = React.useCallback(
+        (newValue: TValues[TFieldName] extends Array<infer U> ? U : never) => {
+          if (!Array.isArray(value)) return
+          setValue((prev) => [...(prev as unknown[]), newValue] as never)
+        },
+        [setValue, value]
+      )
+
+      const update = React.useCallback(
+        (
+          index: number,
+          newValue: TValues[TFieldName] extends Array<infer U> ? U : never
+        ) => {
+          if (!Array.isArray(value)) return
+          setValue(
+            (prev) =>
+              (prev as unknown[]).map((v, i) =>
+                i === index ? newValue : v
+              ) as TValues[TFieldName]
+          )
+        },
+        [setValue, value]
+      )
+
+      const remove = React.useCallback(
+        (index: number) => {
+          if (!Array.isArray(value)) return
+          setValue(
+            (prev) =>
+              (prev as unknown[]).filter(
+                (_, i) => i !== index
+              ) as TValues[TFieldName]
+          )
+        },
+        [setValue, value]
+      )
+
       const id = React.useId()
       const fieldId = `${ctx.formId}-field-${id}`
       const descriptionId = `${fieldId}-description`
@@ -249,6 +294,10 @@ export class FormBuilder<TFields extends Schema.Struct.Fields> {
           descriptionId,
           errorId,
           errors,
+
+          add: add as never,
+          update: update as never,
+          remove: remove as never,
         },
       })
     }
