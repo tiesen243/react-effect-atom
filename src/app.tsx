@@ -1,4 +1,5 @@
 import * as Effect from 'effect/Effect'
+import * as Match from 'effect/Match'
 import * as Schema from 'effect/Schema'
 import { XIcon } from 'lucide-react'
 
@@ -58,10 +59,19 @@ const form = FormBuilder.empty
           description: <pre>{JSON.stringify(data, null, 2)}</pre>,
         }),
       onError: (error) =>
-        toast.add({
-          type: 'error',
-          title: 'Form submission failed',
-          description: error._tag === 'FormError' ? error.reason : error.error,
+        Match.valueTags(error, {
+          FormError: (e) =>
+            toast.add({
+              type: 'error',
+              title: 'Form error',
+              description: e.reason,
+            }),
+          SubmissionError: (e) =>
+            toast.add({
+              type: 'error',
+              title: 'Submission error',
+              description: e.error,
+            }),
         }),
     }
   )
